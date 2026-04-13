@@ -1,0 +1,28 @@
+# 데이터셋 - 용량이 크므로 git에 포함하지 않음
+assets/
+data/
+
+# 학습 결과물
+runs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# 가상환경
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# YOLO 자동 다운로드 가중치
+*.pt
