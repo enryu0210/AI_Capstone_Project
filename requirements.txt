@@ -1,0 +1,17 @@
+# Smoke Detection — YOLOv8 프로젝트 의존성
+# 설치: pip install -r requirements.txt
+
+# 딥러닝 프레임워크 (CUDA 12.4 기준 — CPU 환경은 torch==2.6.0 으로 변경)
+torch==2.6.0
+torchvision==0.21.0
+
+# YOLO 모델
+ultralytics==8.4.37
+
+# 이미지 처리
+opencv-python==4.11.0.86
+pillow==10.4.0
+
+# 수치 연산 및 시각화
+numpy==1.26.4
+matplotlib==3.10.8
