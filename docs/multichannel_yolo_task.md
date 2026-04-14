@@ -316,3 +316,57 @@ python src/video_inference_multichannel.py
   - 케이스 2: YOLO ≥ 0.25 + haze_score ≥ 2 → smoke (얇은 연기 보완)
   - 케이스 3: haze_score = 3 → smoke_warning
 - Sliding window vote는 기존과 동일하게 유지 (VOTE_WINDOW=5, VOTE_K=3)
+
+---
+
+## 실행 결과 (2026-04-14)
+
+### 데이터셋 생성 (`prepare_multichannel_dataset.py`)
+
+| 세트 | smoke | no_smoke |
+|---|---|---|
+| train | 769장 | 769장 |
+| val   | 192장 | 192장 |
+
+### 학습 결과 (`train_multichannel.py`)
+
+- **Best epoch**: 14/50 (Recall 기준 early stop, patience=10)
+- **best.pt PR 분석** (val 세트):
+
+| threshold | Recall | Precision | F1 | FN |
+|---|---|---|---|---|
+| 0.20 (best F1) | 0.9583 | 0.9436 | 0.9509 | 8 |
+| 0.50 (argmax) | 0.8958 | 0.9773 | 0.9348 | 20 |
+
+- **기존 3채널 모델** (t=0.40): Recall=0.9635, FN=7
+- **4채널 모델** val 성능은 3채널 대비 약간 열세 (FN 7→8, F1 0.9711→0.9509)
+
+### 영상 추론 결과 (`video_inference_multichannel.py`)
+
+| 항목 | 4채널 | 3채널 (기존) |
+|---|---|---|
+| 탐지된 smoke 프레임 | 241장 (3.0%) | 3,575장 (44.2%) |
+| 평균 추론 속도 | **3.2 ms/frame (314 FPS)** | 3.2 ms/frame |
+
+### 핵심 발견: diff 채널 도메인 갭 문제
+
+4채널 모델이 실제 영상에서 smoke를 3%만 탐지한 원인:
+
+| | train | 영상 추론 |
+|---|---|---|
+| diff_map | smoke - clean GT (연기 밀도 패턴) | frame[t] - frame[t-1] (움직임) |
+| 실제 연기 프레임의 diff | **높음** (두꺼운 연기 = 큰 차이) | **≈ 0** (안정된 연기는 프레임 간 변화 없음) |
+| 모델 판단 | diff>0 → smoke | diff≈0 → **no_smoke** (오분류) |
+
+모델이 "diff≈0 = no_smoke" 패턴을 과도하게 학습. 노이즈 augmentation으로도 이 갭을 충분히 해소하지 못함.
+
+diff=0 강제 시도 결과도 Recall=0.21로 더 나쁨 → 모델이 diff 채널에 깊게 의존.
+
+### 결론 및 후속 과제
+
+**현재 최선**: 3채널 YOLOv8n-cls + sliding vote (기존 파이프라인)
+
+**4채널 접근법 개선 방향**:
+1. 실제 수술 연기 영상 클립 수집 후 연속 프레임 쌍으로 재학습
+2. 6채널 방식 (현재 RGB + 이전 프레임 RGB) — diff 없이 시간 정보 직접 입력
+3. 긴 시간 차이 diff 사용 (frame[t] - frame[t-30]) — 연기 축적 패턴 포착

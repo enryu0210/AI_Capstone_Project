@@ -61,6 +61,16 @@ HAZE_DEGRADE  = 0.70  # 품질 저하 기준: baseline 대비 70% 이하이면 "
 # 1. 모델 구성 (train_multichannel.py와 동일한 아키텍처)
 # ────────────────────────────────────────────────────────────
 
+def extract_tensor(model_output) -> torch.Tensor:
+    """
+    ultralytics eval 모드에서 model(imgs)가 tuple을 반환하는 경우를 처리한다.
+    train 모드 → Tensor (logits), eval 모드 → tuple[softmax, softmax]
+    """
+    if isinstance(model_output, (tuple, list)):
+        return model_output[0]
+    return model_output
+
+
 def build_4ch_model() -> nn.Module:
     """
     YOLOv8n-cls의 첫 번째 Conv를 4채널로 수정한 모델 아키텍처를 반환한다.
@@ -87,6 +97,13 @@ def build_4ch_model() -> nn.Module:
             new_conv.bias.data = first_conv.bias.data.clone()
 
     nn_model.model[0].conv = new_conv
+
+    # 마지막 분류 레이어 교체 (1000 → 2 클래스)
+    classify_head = nn_model.model[-1]
+    if hasattr(classify_head, "linear"):
+        in_features = classify_head.linear.in_features
+        classify_head.linear = nn.Linear(in_features, 2)
+
     return nn_model
 
 
@@ -393,9 +410,9 @@ def main():
         tensor = tensor.to(DEVICE)
 
         with torch.no_grad():
-            logits     = model(tensor)
-            probs      = torch.softmax(logits, dim=1).cpu().numpy()[0]
-            yolo_conf  = float(probs[1])  # smoke 클래스 index=1
+            # eval 모드 → extract_tensor로 tuple 처리, 이미 softmax 적용됨
+            probs     = extract_tensor(model(tensor)).cpu().numpy()[0]
+            yolo_conf = float(probs[1])  # smoke 클래스 index=1
 
         ms_list.append((time.perf_counter() - t0) * 1000)
         prev_gray = cur_gray

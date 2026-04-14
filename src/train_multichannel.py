@@ -57,6 +57,18 @@ DEVICE   = "cuda:0" if torch.cuda.is_available() else "cpu"
 # 1. 모델 아키텍처 구성
 # ────────────────────────────────────────────────────────────
 
+def extract_tensor(model_output) -> torch.Tensor:
+    """
+    ultralytics 버전에 따라 model(imgs)가 Tensor 또는 tuple을 반환한다.
+      - train 모드: Tensor (raw logits)
+      - eval  모드: tuple[Tensor, Tensor] → [0]이 softmax 확률
+    어느 경우든 첫 번째 Tensor를 반환한다.
+    """
+    if isinstance(model_output, (tuple, list)):
+        return model_output[0]
+    return model_output
+
+
 def build_4ch_model() -> nn.Module:
     """
     YOLOv8n-cls pretrained 모델의 첫 번째 Conv 레이어를
@@ -101,6 +113,16 @@ def build_4ch_model() -> nn.Module:
     nn_model.model[0].conv = new_conv
     print(f"  수정된 첫 번째 conv: {nn_model.model[0].conv}")
 
+    # ── 마지막 분류 레이어 교체 (1000 → 2 클래스) ─────────────
+    # pretrained 모델은 ImageNet 1000 클래스용.
+    # 우리는 smoke/no_smoke 2클래스이므로 linear head만 교체.
+    # → backbone 가중치는 그대로 유지, 분류 head만 랜덤 초기화
+    classify_head = nn_model.model[-1]
+    if hasattr(classify_head, "linear"):
+        in_features = classify_head.linear.in_features
+        classify_head.linear = nn.Linear(in_features, 2)
+        print(f"  수정된 마지막 linear: Linear({in_features}, 2)")
+
     return nn_model
 
 
@@ -143,8 +165,8 @@ def train():
             imgs   = imgs.to(DEVICE)
             labels = labels.to(DEVICE)
 
-            # ClassificationModel forward → (batch, num_classes) logits
-            outputs = model(imgs)
+            # train 모드 → raw logits tensor (CE loss에 바로 사용 가능)
+            outputs = extract_tensor(model(imgs))
             loss    = criterion(outputs, labels)
 
             optimizer.zero_grad()
@@ -162,7 +184,8 @@ def train():
         with torch.no_grad():
             for imgs, labels in val_loader:
                 imgs      = imgs.to(DEVICE)
-                preds     = model(imgs).argmax(dim=1).cpu().numpy()
+                # eval 모드 → softmax 확률 tensor (또는 tuple[0])
+                preds     = extract_tensor(model(imgs)).argmax(dim=1).cpu().numpy()
                 labels_np = labels.numpy()
 
                 for pred, gt in zip(preds, labels_np):
@@ -246,9 +269,10 @@ def pr_analysis(model: nn.Module, val_loader: DataLoader):
 
     with torch.no_grad():
         for imgs, labels in val_loader:
-            imgs   = imgs.to(DEVICE)
-            logits = model(imgs)
-            probs  = torch.softmax(logits, dim=1).cpu().numpy()  # (batch, 2)
+            imgs  = imgs.to(DEVICE)
+            out   = extract_tensor(model(imgs))  # eval 모드 → 이미 softmax 적용됨
+            # out 값이 softmax(합=1)인지 확인 후 필요 시만 softmax 적용
+            probs = out.cpu().numpy()  # (batch, 2)
 
             for i, label in enumerate(labels.numpy()):
                 smoke_prob = float(probs[i, 1])  # smoke 클래스 index=1

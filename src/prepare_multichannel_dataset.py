@@ -30,6 +30,17 @@ import cv2
 from pathlib import Path
 
 
+def imread_unicode(path: Path) -> np.ndarray:
+    """
+    Windows에서 한글 등 비ASCII 경로를 지원하는 이미지 로더.
+    cv2.imread()는 Windows에서 비ASCII 경로를 처리하지 못하므로
+    np.fromfile + cv2.imdecode 방식으로 우회한다.
+    """
+    buf = np.fromfile(str(path), dtype=np.uint8)
+    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    return img
+
+
 # ── 경로 설정 ──────────────────────────────────────────────
 BASE_DIR   = Path(__file__).resolve().parent.parent
 SRC_DIR    = BASE_DIR / "assets" / "DesmokeData_dataset"
@@ -66,8 +77,8 @@ def build_4ch_smoke(
 
     augment=True → diff_map에 노이즈 추가 (학습-추론 도메인 갭 완화)
     """
-    smoke_img = cv2.imread(str(smoke_path))
-    clean_img = cv2.imread(str(clean_path))
+    smoke_img = imread_unicode(smoke_path)
+    clean_img = imread_unicode(clean_path)
     if smoke_img is None or clean_img is None:
         raise FileNotFoundError(
             f"이미지 로드 실패: {smoke_path.name} 또는 {clean_path.name}"
@@ -98,7 +109,7 @@ def build_4ch_no_smoke(
     augment=True → 20% 확률로 약한 노이즈 추가
       → 수술 도구/조직 움직임으로 인한 미세한 diff 시뮬레이션
     """
-    clean_img = cv2.imread(str(clean_path))
+    clean_img = imread_unicode(clean_path)
     if clean_img is None:
         raise FileNotFoundError(f"이미지 로드 실패: {clean_path.name}")
 
