@@ -2,7 +2,8 @@
 
 > 작업일: 2026-04-15  
 > 기반 문서: `docs/thin_smoke_continuity_fix.md`  
-> 수정 대상: `src/video_inference_v3.ipynb` (신규 생성)
+> 수정 대상: `src/video_inference_v3.ipynb` (신규 생성)  
+> 추가 수정: BalloonGate (흰 기구 오탐 억제) — 2026-04-15
 
 ---
 
@@ -96,6 +97,68 @@ elif cooldown_counter > 0:
 |---|---|
 | `smoke_state` | **(v3 신규)** Hysteresis 확정 smoke 상태 |
 | `cooldown` | **(v3 신규)** 남은 cooldown 프레임 수 |
+
+---
+
+---
+
+## BalloonGate (흰 기구 오탐 억제)
+
+### 배경
+
+흰 기구가 프레임에 등장하면 두 경로로 오탐 발생:
+1. **YOLO 오탐**: 흰 기구가 시각적으로 연기와 유사하게 분류됨
+2. **ThinSmoke 오탐**: 흰색 = HSV S채널 ≈ 0 → 프레임 전체 채도 평균 급락 → sat_ratio 조건 충족
+
+### 핵심 아이디어: 연기 vs 흰 기구의 형태 차이
+
+| 특성 | 연기 | 흰 기구 |
+|---|---|---|
+| 형태 | 불규칙·확산, 경계 흐림 | **원형/타원형, 경계 선명** |
+| 원형도 (circularity) | 낮음 (0.1~0.3) | **높음 (0.7~0.9)** |
+| 볼록도 (convexity) | 낮음 | **높음 (≈1.0)** |
+| 밝기 (HSV V) | 중간 | **극단적으로 높음 (≈255)** |
+
+### 방법 1: BalloonGate 클래스 (흰 볼록체 감지)
+
+```python
+# 흰 영역 마스크: V > 200 AND S < 40
+white_mask = cv2.inRange(hsv, (0,0,200), (180,40,255))
+# 원형도 = 4π × area / perimeter²  (완전한 원 = 1.0)
+# 볼록도 = contour면적 / convex hull면적
+# 조건 충족 시 is_balloon=True → YOLO vote 및 ThinSmoke 억제
+```
+
+파라미터:
+
+| 파라미터 | 값 | 의미 |
+|---|---|---|
+| `WHITE_V_MIN` | `200` | HSV 밝기 하한 |
+| `WHITE_S_MAX` | `40` | HSV 채도 상한 |
+| `BLOB_AREA_MIN` | `1000` | 유효 blob 최소 면적 (px) |
+| `BLOB_CIRCULARITY_MIN` | `0.45` | 원형도 하한 |
+| `BLOB_CONVEXITY_MIN` | `0.80` | 볼록도 하한 |
+| `BALLOON_YOLO_SUPPRESS_THR` | `0.65` | YOLO 억제 conf 상한 (이상이면 실제 연기로 간주) |
+
+### 방법 2: ROI 마스킹 (ThinSmoke 특징 계산에서 흰 영역 제외)
+
+```python
+# Laplacian 계산 후 유효 픽셀 분산만 추출 (경계 인위적 엣지 방지)
+lap = cv2.Laplacian(gray, cv2.CV_64F)
+sharpness = float(np.var(lap[valid_pixels]))
+# 채도도 흰 영역 제외 픽셀만 평균
+saturation = float(hsv[:,:,1][valid_pixels].mean())
+```
+
+기구가 없는 상황에서도 항상 적용 → 통계 왜곡 원천 차단
+
+### 오버레이 색상 추가
+
+| 색상 | 의미 |
+|---|---|
+| 빨간색 | Smoke 탐지 |
+| 초록색 | No Smoke |
+| **주황색** | **BalloonGate 활성 (흰 기구 감지)** |
 
 ---
 
