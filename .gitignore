@@ -26,3 +26,17 @@ env/
 
 # YOLO 자동 다운로드 가중치
 *.pt
+
+# ── PFAN-SurgiATM-PGSA: 무거운 학습 산출물 제외 ─────────────
+# wandb 학습 로그 (800 MB) — 원격에서 거의 사용 안 함
+src/PFAN-SurgiATM-PGSA/wandb/
+# 90+ 에폭별 중간 체크포인트 (174 MB) — 재학습/이어학습용, 클라이언트엔 불필요
+src/PFAN-SurgiATM-PGSA/Checkpoint/PFAN_InVivo/
+# prepare_checkpoint.py 가 자동 생성하는 표준 경로 복사본 — 재현 가능
+src/PFAN-SurgiATM-PGSA/Checkpoint/PFAN_Final/
+# 학습 로그 파일
+src/PFAN-SurgiATM-PGSA/*.log
+# 셸 리다이렉션 사고로 생긴 빈 파일들 (=2.0.0rc4, =2.1.0, =2.2.0)
+src/PFAN-SurgiATM-PGSA/=*
+# Python 캐시 (전역 __pycache__/ 규칙이 있으나 명시적으로 한 번 더)
+src/PFAN-SurgiATM-PGSA/**/__pycache__/

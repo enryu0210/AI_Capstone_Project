@@ -1,0 +1,25 @@
+python train.py \
+  --dataroot /workspace/PFAN-SurgiATM/DesmokeData/combined \
+  --name PFAN_InVivo \
+  --model pix2pix \
+  --netG pfan \
+  --netD basic \
+  --direction AtoB \
+  --dataset_mode aligned \
+  --norm batch \
+  --checkpoints_dir /workspace/PFAN-SurgiATM/Checkpoint \
+  --token_projection conv \
+  --embed_dim 64 \
+  --batch_size 16\
+  --num_threads 12 \
+  --use_wandb \
+  --wandb_project_name PFAN_surgiATM \
+  --lr 0.00017799224586975912 \
+  --beta1 0.894094579341775 \
+  --gan_mode lsgan \
+  --surgiatm_wz 15 \
+  --n_epochs 300 \
+  --gpu_ids 0 \
+  --lambda_smooth 1.2434794417055085 \
+  --smooth_alpha 49.843750632553075 \
+  --ndf 16 \
