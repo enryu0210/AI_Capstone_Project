@@ -24,6 +24,9 @@ env/
 .vscode/
 .idea/
 
+# Claude Code 로컬 메모 — 팀 공유 X
+CLAUDE.md
+
 # YOLO 자동 다운로드 가중치
 *.pt
 
