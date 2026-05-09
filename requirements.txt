@@ -1,4 +1,4 @@
-# Smoke Detection — YOLOv8 프로젝트 의존성
+# Smoke Detection — YOLOv8 프로젝트 + PFAN De-Smoking PC 클라이언트 의존성
 # 설치: pip install -r requirements.txt
 
 # 딥러닝 프레임워크 (CUDA 12.4 기준 — CPU 환경은 torch==2.6.0 으로 변경)
@@ -15,3 +15,18 @@ pillow==10.4.0
 # 수치 연산 및 시각화
 numpy==1.26.4
 matplotlib==3.10.8
+
+# ── PFAN De-Smoking 모델 추론 의존성 ─────────────────────────
+# 이유: src/PFAN-SurgiATM-PGSA/models/pix2pix_model.py 가 모듈 임포트 시점에
+#       pytorch_msssim 을 사용하며, PFAN 내부 트랜스포머가 einops/timm 을 사용함.
+pytorch-msssim>=1.0.0
+einops>=0.8.0
+timm>=1.0.0
+# mmcv-lite: 컴파일 안된 pure-python 버전 (PFAN 의 seaformer 모듈이 ConvModule 만 사용하므로 충분)
+mmcv-lite>=2.2.0
+mmengine>=0.10.7
+
+# ── PC 클라이언트 GUI ───────────────────────────────────────
+# 이유: 실시간 디스모킹 영상 미리보기·녹화를 위한 데스크톱 UI 프레임워크
+# 6.6 LTS 핀: 6.11.0 은 Anaconda Python 3.12 환경에서 QtCore DLL 로드 실패 사례 있음
+PySide6==6.6.3.1
