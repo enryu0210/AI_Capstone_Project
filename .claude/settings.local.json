@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python src/prepare_dataset.py)",
+      "Bash(python src/pretrained_test.py)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(pip show:*)",
+      "Bash(git filter-repo:*)",
+      "Bash(jupyter nbconvert:*)"
+    ]
+  }
+}
