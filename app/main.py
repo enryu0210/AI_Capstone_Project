@@ -51,11 +51,28 @@ def main() -> int:
 
     # ─ 2) Qt 앱 + 메인 윈도우 ─────────────────────────────────
     # PySide6 import 는 여기에서 (모듈 로드 비용을 늦춤)
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication
 
     from app.main_window import MainWindow
 
+    # Qt6 는 기본적으로 HiDPI 자동 스케일이 켜져있지만, 픽스맵도 확실히 고해상도로
+    # 처리되도록 명시. QApplication 생성 전에 호출돼야 효과 있음.
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
+
     app = QApplication(sys.argv)
+
+    # Fusion 스타일은 플랫폼 무관하게 일관된 베이스를 제공 — 이 위에 우리 QSS 가
+    # 깔끔하게 입혀진다 (Windows 네이티브 스타일은 일부 QSS 속성을 무시함).
+    app.setStyle("Fusion")
+
+    # 기본 폰트를 약간 굵고 깔끔하게
+    base_font = QFont("Segoe UI", 10)
+    app.setFont(base_font)
+
     win = MainWindow()
     win.show()
     return app.exec()
