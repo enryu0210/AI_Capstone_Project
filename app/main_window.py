@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -48,6 +49,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStatusBar,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -348,7 +350,8 @@ class MainWindow(QMainWindow):
         _attach_card_shadow(header_card)
         content_layout.addWidget(header_card)
 
-        content_layout.addLayout(self._build_previews(), 1)
+        # 프리뷰 영역 — LIVE / ANALYSIS 두 탭으로 구성
+        content_layout.addWidget(self._build_preview_tabs(), 1)
         root.addWidget(content, 1)
 
         # 3) 상태바
@@ -496,9 +499,25 @@ class MainWindow(QMainWindow):
         wrap.addLayout(row)
         return wrap
 
-    def _build_previews(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
-        layout.setSpacing(14)
+    def _build_preview_tabs(self) -> QTabWidget:
+        """LIVE / ANALYSIS 두 탭을 가진 프리뷰 영역.
+
+        - LIVE: 원본 ↔ 디스모킹 (기본 임상 사용 시점)
+        - ANALYSIS: 원본 / DCP map / 연기 분포 히트맵 / 디스모킹 4분할 (시연용)
+
+        같은 프레임이 들어오면 두 탭의 동명(同名) 카드가 모두 업데이트되도록
+        ``_preview_orig_cards`` 같은 리스트로 묶어 한 번에 set 한다.
+        """
+        tabs = QTabWidget()
+        tabs.setObjectName("previewTabs")
+        tabs.setDocumentMode(True)
+        tabs.setTabPosition(QTabWidget.TabPosition.North)
+
+        # ── LIVE 탭 ──────────────────────────────────────────────
+        live_page = QWidget()
+        live_layout = QHBoxLayout(live_page)
+        live_layout.setContentsMargins(0, 12, 0, 0)
+        live_layout.setSpacing(14)
 
         self.preview_orig = PreviewCard(
             mark="◉",
@@ -512,17 +531,78 @@ class MainWindow(QMainWindow):
             tag="PFAN · SURGIATM",
             subtitle="추론 결과가 여기에 표시됩니다",
         )
-        # 시작 전엔 비활성 톤
-        self.preview_orig.set_active(False)
-        self.preview_clean.set_active(False)
-
-        # 카드에 그림자 — 떠 있는 인상
         _attach_card_shadow(self.preview_orig, strong=True)
         _attach_card_shadow(self.preview_clean, strong=True)
+        live_layout.addWidget(self.preview_orig, 1)
+        live_layout.addWidget(self.preview_clean, 1)
 
-        layout.addWidget(self.preview_orig, 1)
-        layout.addWidget(self.preview_clean, 1)
-        return layout
+        # ── ANALYSIS 탭 ──────────────────────────────────────────
+        analysis_page = QWidget()
+        analysis_grid = QGridLayout(analysis_page)
+        analysis_grid.setContentsMargins(0, 12, 0, 0)
+        analysis_grid.setHorizontalSpacing(14)
+        analysis_grid.setVerticalSpacing(14)
+
+        self.preview_orig_a = PreviewCard(
+            mark="◉",
+            title="Original",
+            tag="SOURCE",
+            subtitle="원본 입력 프레임",
+        )
+        self.preview_dcp = PreviewCard(
+            mark="◐",
+            title="DCP Map",
+            tag="DARK CHANNEL · GUIDED",
+            subtitle="물리 기반 어두운 채널 사전지식 — 밝을수록 연기 짙음",
+        )
+        self.preview_smoke = PreviewCard(
+            mark="◔",
+            title="Smoke Heatmap",
+            tag="ρ · DENSITY",
+            subtitle="모델이 제거한 연기 분포 — 노랑일수록 강하게 제거",
+        )
+        self.preview_clean_a = PreviewCard(
+            mark="✓",
+            title="Desmoked",
+            tag="PFAN · SURGIATM",
+            subtitle="최종 디스모킹 결과",
+        )
+        for card in (
+            self.preview_orig_a,
+            self.preview_dcp,
+            self.preview_smoke,
+            self.preview_clean_a,
+        ):
+            _attach_card_shadow(card, strong=True)
+
+        # 2x2 그리드: (원본 | DCP) / (Smoke | Desmoked)
+        # — 좌→우 / 상→하 흐름이 자연스럽게 "입력 → 물리 분석 → 출력" 으로 읽힘
+        analysis_grid.addWidget(self.preview_orig_a, 0, 0)
+        analysis_grid.addWidget(self.preview_dcp, 0, 1)
+        analysis_grid.addWidget(self.preview_smoke, 1, 0)
+        analysis_grid.addWidget(self.preview_clean_a, 1, 1)
+        # 그리드 셀이 동일 비율로 늘어나도록 stretch 부여
+        analysis_grid.setRowStretch(0, 1)
+        analysis_grid.setRowStretch(1, 1)
+        analysis_grid.setColumnStretch(0, 1)
+        analysis_grid.setColumnStretch(1, 1)
+
+        # ── 같은 프레임을 두 탭에 동시에 반영하기 위한 그룹 ────
+        # 각 항목별로 두 탭 카드를 묶어둠 → _on_frame 에서 일괄 업데이트.
+        self._orig_cards = [self.preview_orig, self.preview_orig_a]
+        self._clean_cards = [self.preview_clean, self.preview_clean_a]
+        self._dcp_cards = [self.preview_dcp]
+        self._smoke_cards = [self.preview_smoke]
+        # set_active 도 한 번에 — LIVE/ANALYSIS 양쪽 시각이 일관되도록
+        self._all_cards = (
+            self._orig_cards + self._clean_cards + self._dcp_cards + self._smoke_cards
+        )
+        for c in self._all_cards:
+            c.set_active(False)
+
+        tabs.addTab(live_page, "LIVE")
+        tabs.addTab(analysis_page, "ANALYSIS")
+        return tabs
 
     def _build_status_bar(self) -> QStatusBar:
         bar = QStatusBar(self)
@@ -737,8 +817,8 @@ class MainWindow(QMainWindow):
         self.device_combo.setEnabled(False)
         self.btn_record.setEnabled(False)
         self._pill_state.set_live(recording=record_path is not None)
-        self.preview_orig.set_active(True)
-        self.preview_clean.set_active(True)
+        for c in self._all_cards:
+            c.set_active(True)
         self._tele_frames.set_value("0")
         self._tele_fps.set_value("—")
         self._tele_latency.set_value("—")
@@ -790,9 +870,29 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────────────────────────────
     # Worker Slots
     # ─────────────────────────────────────────────────────────────
-    def _on_frame(self, orig_qimg, clean_qimg, latency_ms: float) -> None:
-        self.preview_orig.update_image(orig_qimg)
-        self.preview_clean.update_image(clean_qimg)
+    def _on_frame(
+        self,
+        orig_qimg,
+        clean_qimg,
+        dcp_qimg,
+        smoke_qimg,
+        latency_ms: float,
+    ) -> None:
+        # LIVE / ANALYSIS 양쪽 탭의 같은 카드를 동시에 업데이트
+        for c in self._orig_cards:
+            c.update_image(orig_qimg)
+        for c in self._clean_cards:
+            c.update_image(clean_qimg)
+
+        # DCP / smoke 는 모델이 못 만들었을 수도 있으므로 isNull() 가드.
+        # 일반 경로(맵이 정상)에선 setPixmap 만 갱신되어 비용은 무시 수준.
+        if dcp_qimg is not None and not dcp_qimg.isNull():
+            for c in self._dcp_cards:
+                c.update_image(dcp_qimg)
+        if smoke_qimg is not None and not smoke_qimg.isNull():
+            for c in self._smoke_cards:
+                c.update_image(smoke_qimg)
+
         self._latest_clean_qimg = clean_qimg
 
         # Latency 텔레메트리 + 색상 코딩
@@ -813,8 +913,8 @@ class MainWindow(QMainWindow):
         self.source_combo.setEnabled(True)
         self.device_combo.setEnabled(True)
         self.btn_record.setEnabled(True)
-        self.preview_orig.set_active(False)
-        self.preview_clean.set_active(False)
+        for c in self._all_cards:
+            c.set_active(False)
 
         if reason == "end_of_stream":
             self._pill_state.set_idle("end of stream")

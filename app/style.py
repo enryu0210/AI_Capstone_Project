@@ -400,6 +400,36 @@ QLabel#pillState[error="true"] {{
     border-color: {COLORS['danger']};
 }}
 
+/* ── 탭 위젯 (LIVE / ANALYSIS) ─────────────────────────────── */
+/* documentMode=True 이므로 탭바만 보이고 패널 보더는 직접 그리지 않음. */
+QTabWidget#previewTabs::pane {{
+    border: none;
+    top: -1px;            /* 탭과 컨텐츠 사이의 1px 틈 제거 */
+}}
+QTabWidget#previewTabs QTabBar {{
+    qproperty-drawBase: 0;
+}}
+QTabWidget#previewTabs QTabBar::tab {{
+    background-color: transparent;
+    color: {COLORS['text_muted']};
+    font-family: {FONTS['display']};
+    font-size: 9.5pt;
+    font-weight: 600;
+    letter-spacing: 4px;
+    padding: 8px 22px;
+    margin-right: 4px;
+    border: 1px solid transparent;
+    border-bottom: 1px solid {COLORS['border']};
+}}
+QTabWidget#previewTabs QTabBar::tab:hover {{
+    color: {COLORS['text']};
+}}
+QTabWidget#previewTabs QTabBar::tab:selected {{
+    color: {COLORS['accent']};
+    /* 선택된 탭의 하단에만 accent 색 인디케이터 라인 */
+    border-bottom: 2px solid {COLORS['accent']};
+}}
+
 /* ── 다이얼로그 / 메시지 박스 ─────────────────────────────── */
 QMessageBox {{ background-color: {COLORS['bg']}; }}
 QMessageBox QLabel {{ color: {COLORS['text']}; font-family: {FONTS['body']}; }}

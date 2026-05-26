@@ -231,36 +231,147 @@ class DesmokeEngine:
           원본 해상도로 다시 업스케일 한다 (모델이 256 분포로 학습됐기 때문).
         - 색공간: cv2 와 동일하게 BGR 입출력 → GUI/녹화에 그대로 쓰기 편함.
         """
+        clean, _dcp, _smoke = self.process_bgr_frame_with_maps(bgr, make_maps=False)
+        return clean
+
+    # ── 시각화 맵까지 함께 반환 (시연용) ──────────────────────────
+    def process_bgr_frame_with_maps(
+        self,
+        bgr: np.ndarray,
+        *,
+        make_maps: bool = True,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+        """디스모킹 결과 + DCP map + 연기 분포 히트맵을 한 번에 반환.
+
+        Returns
+        -------
+        clean_bgr : np.ndarray
+            디스모킹된 BGR uint8 프레임 (원본 해상도).
+        dcp_bgr : np.ndarray | None
+            Dark Channel Prior 시각화 (BGR uint8, 원본 해상도). ``make_maps=False`` 시 ``None``.
+        smoke_bgr : np.ndarray | None
+            연기 분포 히트맵 — 물리 모델이 실제로 빼낸 연기량 ``(η+D)/(η+1)·(1-ρ)`` 시각화.
+            ``make_maps=False`` 시 ``None``.
+
+        Notes
+        -----
+        - 맵 두 장은 단일 채널 [0,1] 텐서를 OpenCV 컬러맵으로 변환한 결과.
+          DCP 는 BONE (옅은 → 진한 청회색), Smoke 는 INFERNO (검정 → 노랑) 로 의료 톤에 맞춤.
+        - 추가 비용은 그래도 작음(텐서→numpy→resize). GUI fps 영향은 미미.
+        """
         if bgr.ndim != 3 or bgr.shape[2] != 3:
             raise ValueError("입력 프레임은 (H,W,3) BGR 형식이어야 합니다.")
 
+        import cv2  # 지연 임포트 — process_tensor 단독 사용 시엔 cv2 없이도 OK
+
         original_h, original_w = bgr.shape[:2]
 
-        # 1) 256 으로 다운스케일 + RGB 변환
-        #    cv2 는 BGR, 모델은 RGB 분포로 학습 → 색감 보존을 위해 변환 필수.
-        import cv2  # 지연 임포트 (엔진 자체는 cv2 없이도 process_tensor 만 쓸 수 있게)
+        # 1) 모델 입력 텐서 준비 (256×256, RGB, [-1,1])
         rgb_small = cv2.cvtColor(
             cv2.resize(bgr, (self.INPUT_SIZE, self.INPUT_SIZE), interpolation=cv2.INTER_AREA),
             cv2.COLOR_BGR2RGB,
         )
-
-        # 2) [0,255] uint8 → [-1,1] float32 텐서
         tensor = torch.from_numpy(rgb_small).float().permute(2, 0, 1).unsqueeze(0)
         tensor = tensor / 127.5 - 1.0
         tensor = tensor.to(self.device)
 
-        # 3) 추론
+        # 2) 추론 — forward 가 끝나면 model.D_refined / rho_DNN_norm 이 채워짐
         out_tensor = self.process_tensor(tensor)
 
-        # 4) 텐서 → uint8 RGB (tensor2im 이 [-1,1] → uint8 변환 + transpose 까지 처리)
+        # 3) 디스모킹 결과 BGR 변환 + 원본 해상도로 업스케일
         out_rgb = tensor2im(out_tensor)  # (H,W,3) uint8 RGB
-
-        # 5) 원본 해상도로 업스케일 + BGR 로 되돌리기
-        out_bgr = cv2.cvtColor(out_rgb, cv2.COLOR_RGB2BGR)
+        clean_bgr = cv2.cvtColor(out_rgb, cv2.COLOR_RGB2BGR)
         if (original_h, original_w) != (self.INPUT_SIZE, self.INPUT_SIZE):
-            out_bgr = cv2.resize(
-                out_bgr,
+            clean_bgr = cv2.resize(
+                clean_bgr,
                 (original_w, original_h),
                 interpolation=cv2.INTER_LINEAR,
             )
-        return out_bgr
+
+        if not make_maps:
+            return clean_bgr, None, None
+
+        # 4) 내부 텐서 꺼내기 — 모두 (1,1,256,256), [0,1] 범위
+        d_refined = self._extract_scalar_map(getattr(self.model, "D_refined", None))
+        rho_norm = self._extract_scalar_map(getattr(self.model, "rho_DNN_norm", None))
+
+        # 5) 두 맵을 컬러맵으로 변환 (실패 시 None 으로 안전하게 폴백)
+        dcp_bgr: Optional[np.ndarray] = None
+        smoke_bgr: Optional[np.ndarray] = None
+
+        if d_refined is not None:
+            dcp_bgr = self._colorize_map(
+                d_refined,
+                out_size=(original_w, original_h),
+                colormap=cv2.COLORMAP_BONE,
+            )
+
+        if d_refined is not None and rho_norm is not None:
+            # 물리 모델이 실제로 빼낸 연기량 — SurgiATM 의 dc_rho 와 동일한 수식
+            # eta=0.1 은 SurgiATM 기본값과 동일 (모델 init 에서 변경된 적 없음).
+            eta = 0.1
+            smoke_density = (eta + d_refined) / (eta + 1.0) * (1.0 - rho_norm)
+            # 시각화를 위해 [0,1] 클램프 — 수치 오차로 살짝 음수가 날 수 있어 안전 처리
+            smoke_density = np.clip(smoke_density, 0.0, 1.0)
+            smoke_bgr = self._colorize_map(
+                smoke_density,
+                out_size=(original_w, original_h),
+                colormap=cv2.COLORMAP_INFERNO,
+            )
+
+        return clean_bgr, dcp_bgr, smoke_bgr
+
+    # ── 내부 유틸 ─────────────────────────────────────────────────
+    @staticmethod
+    def _extract_scalar_map(t: Optional[torch.Tensor]) -> Optional[np.ndarray]:
+        """모델 내부 텐서를 (H,W) float32 numpy 로 환산.
+
+        ──────────────────────────────────────────────────────────
+        형태 처리:
+        - (1,1,H,W) → squeeze → (H,W)                        ··· DCP map
+        - (1,3,H,W) → 채널 평균(luminance 근사) → (H,W)      ··· rho_DNN_norm
+        - (1,H,W) / (H,W) → 그대로
+
+        rho_DNN 은 RGB 채널별로 다르게 예측되지만, 시연용 "연기 분포" 는 단일
+        스칼라가 더 읽기 쉬워서 채널 평균을 사용한다. 색상 왜곡 정도가 채널마다
+        다른 데서 오는 미세 차이는 시각화 톤에선 무시 가능.
+        ──────────────────────────────────────────────────────────
+        """
+        if t is None:
+            return None
+        arr = t.detach().to("cpu").float().numpy()
+        # 배치 차원 제거
+        if arr.ndim == 4 and arr.shape[0] == 1:
+            arr = arr[0]
+        # 채널 차원 정리
+        if arr.ndim == 3:
+            if arr.shape[0] == 1:
+                arr = arr[0]
+            else:
+                # 멀티채널은 평균으로 단일채널 환산 (luminance 근사)
+                arr = arr.mean(axis=0)
+        if arr.ndim != 2:
+            return None
+        return arr
+
+    @staticmethod
+    def _colorize_map(
+        scalar: np.ndarray,
+        *,
+        out_size: tuple[int, int],
+        colormap: int,
+    ) -> np.ndarray:
+        """[0,1] 단일채널 맵을 컬러맵으로 변환 + 원본 해상도로 업스케일.
+
+        Parameters
+        ----------
+        scalar : (H,W) float32 in [0,1]
+        out_size : (W, H) — cv2.resize 가 기대하는 순서
+        colormap : cv2.COLORMAP_* 상수
+        """
+        import cv2
+        u8 = (np.clip(scalar, 0.0, 1.0) * 255.0).astype(np.uint8)
+        colored = cv2.applyColorMap(u8, colormap)  # BGR uint8
+        if (colored.shape[1], colored.shape[0]) != out_size:
+            colored = cv2.resize(colored, out_size, interpolation=cv2.INTER_LINEAR)
+        return colored

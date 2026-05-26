@@ -28,6 +28,15 @@ from app.desmoke_engine import DesmokeEngine
 from app.frame_source import FrameSource
 
 
+def _empty_qimage():
+    """맵 생성 실패 시 시그널 시그니처 유지를 위한 빈 QImage.
+
+    수신측은 ``isNull()`` 로 빈 것을 감지해 안내 텍스트로 폴백한다.
+    """
+    from PySide6.QtGui import QImage
+    return QImage()
+
+
 def bgr_to_qimage(bgr: np.ndarray):
     """OpenCV BGR uint8 → PySide6 QImage (RGB888) 변환.
 
@@ -50,15 +59,17 @@ class InferenceWorker(QThread):
 
     Signals
     -------
-    frame_processed(QImage, QImage, float)
-        (원본 RGB QImage, 디스모킹 RGB QImage, latency_ms)
+    frame_processed(QImage, QImage, QImage, QImage, float)
+        (원본, 디스모킹, DCP map, 연기 분포 히트맵, latency_ms).
+        DCP/연기 QImage 는 모델이 맵을 못 만든 경우 빈 QImage (isNull) 일 수 있음.
     stats_updated(float, int)
         (현재 FPS, 누적 프레임 수)
     finished_with_reason(str)
         루프가 끝났을 때 사유 문자열 ("end_of_stream", "stopped", "error: ...").
     """
 
-    frame_processed = Signal(object, object, float)   # QImage, QImage, latency_ms
+    # 5개 인자 — object 로 두어 PySide 메타타입 등록 부담을 줄임
+    frame_processed = Signal(object, object, object, object, float)
     stats_updated = Signal(float, int)                # fps, frame_index
     finished_with_reason = Signal(str)
 
@@ -120,14 +131,21 @@ class InferenceWorker(QThread):
                     break
 
                 t0 = time.perf_counter()
-                clean_bgr = self._engine.process_bgr_frame(frame_bgr)
+                # ANALYSIS 탭 시연을 위해 DCP / 연기 맵까지 함께 받아옴.
+                # make_maps=True 자체는 GPU 1~2ms 수준 — fps 영향 미미.
+                clean_bgr, dcp_bgr, smoke_bgr = self._engine.process_bgr_frame_with_maps(
+                    frame_bgr,
+                    make_maps=True,
+                )
                 latency_ms = (time.perf_counter() - t0) * 1000.0
 
-                # 1) 결과 송출 (QImage 변환 후 송출 — Slot 측은 setPixmap 만)
-                #    Signal 인자 타입은 object 로 두어 import 의존을 낮춤.
+                # 1) 결과 송출 (QImage 변환 후 송출 — Slot 측은 setPixmap 만).
+                #    DCP / 연기 맵은 모델이 못 만들면 None — 빈 QImage 로 폴백해 시그널 시그니처 유지.
                 orig_qimg = bgr_to_qimage(frame_bgr)
                 clean_qimg = bgr_to_qimage(clean_bgr)
-                self.frame_processed.emit(orig_qimg, clean_qimg, latency_ms)
+                dcp_qimg = bgr_to_qimage(dcp_bgr) if dcp_bgr is not None else _empty_qimage()
+                smoke_qimg = bgr_to_qimage(smoke_bgr) if smoke_bgr is not None else _empty_qimage()
+                self.frame_processed.emit(orig_qimg, clean_qimg, dcp_qimg, smoke_qimg, latency_ms)
 
                 # 2) 녹화
                 if writer is not None:
