@@ -26,6 +26,7 @@ from PySide6.QtCore import QThread, Signal
 
 from app.desmoke_engine import DesmokeEngine
 from app.frame_source import FrameSource
+from app.smoke_detector import DetectionResult, SmokeDetector
 
 
 def _empty_qimage():
@@ -59,17 +60,18 @@ class InferenceWorker(QThread):
 
     Signals
     -------
-    frame_processed(QImage, QImage, QImage, QImage, float)
-        (원본, 디스모킹, DCP map, 연기 분포 히트맵, latency_ms).
+    frame_processed(QImage, QImage, QImage, QImage, float, object)
+        (원본, 디스모킹, DCP map, 연기 분포 히트맵, latency_ms, DetectionResult|None).
         DCP/연기 QImage 는 모델이 맵을 못 만든 경우 빈 QImage (isNull) 일 수 있음.
+        DetectionResult 는 detector 가 비활성/미장착이면 None.
     stats_updated(float, int)
         (현재 FPS, 누적 프레임 수)
     finished_with_reason(str)
         루프가 끝났을 때 사유 문자열 ("end_of_stream", "stopped", "error: ...").
     """
 
-    # 5개 인자 — object 로 두어 PySide 메타타입 등록 부담을 줄임
-    frame_processed = Signal(object, object, object, object, float)
+    # 6개 인자로 확장 — 마지막 object 는 DetectionResult | None
+    frame_processed = Signal(object, object, object, object, float, object)
     stats_updated = Signal(float, int)                # fps, frame_index
     finished_with_reason = Signal(str)
 
@@ -80,6 +82,8 @@ class InferenceWorker(QThread):
         *,
         record_path: Optional[Path] = None,
         target_fps: Optional[float] = None,
+        detector: Optional[SmokeDetector] = None,
+        only_desmoke_when_smoke: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -87,6 +91,11 @@ class InferenceWorker(QThread):
         self._source = source
         self._record_path = record_path
         self._target_fps = target_fps
+        # detector 는 옵션 — 가중치가 없거나 사용자가 꺼두면 None 일 수 있다.
+        self._detector = detector if (detector is not None and detector.is_available()) else None
+        # SMOKE 판정일 때만 디스모킹 추론을 돌리는 절전 모드.
+        # detector 가 없으면 의미 없으므로 자동 무력화.
+        self._only_when_smoke = bool(only_desmoke_when_smoke and self._detector is not None)
 
         # 협력적 종료 플래그 — QThread.requestInterruption 도 가능하지만
         # 직접 플래그로 표현하면 의도가 명확.
@@ -123,6 +132,9 @@ class InferenceWorker(QThread):
             # ─ 메인 루프 ───────────────────────────────────────────
             self._fps_window_start = time.perf_counter()
             self._fps_window_count = 0
+            # detector 의 누적 상태를 영상마다 깨끗하게 시작
+            if self._detector is not None:
+                self._detector.reset()
 
             while not self._stop_requested:
                 frame_bgr = self._source.read()
@@ -131,12 +143,29 @@ class InferenceWorker(QThread):
                     break
 
                 t0 = time.perf_counter()
-                # ANALYSIS 탭 시연을 위해 DCP / 연기 맵까지 함께 받아옴.
-                # make_maps=True 자체는 GPU 1~2ms 수준 — fps 영향 미미.
-                clean_bgr, dcp_bgr, smoke_bgr = self._engine.process_bgr_frame_with_maps(
-                    frame_bgr,
-                    make_maps=True,
-                )
+
+                # ① 연기 탐지 (있을 때만)
+                det_result: Optional[DetectionResult] = None
+                if self._detector is not None:
+                    det_result = self._detector.run(frame_bgr)
+
+                # ② 디스모킹 추론 — only_when_smoke 모드면 SMOKE 판정 시에만 실행
+                run_desmoke = True
+                if self._only_when_smoke and det_result is not None and not det_result.is_smoke:
+                    run_desmoke = False
+
+                if run_desmoke:
+                    clean_bgr, dcp_bgr, smoke_bgr = self._engine.process_bgr_frame_with_maps(
+                        frame_bgr,
+                        make_maps=True,
+                    )
+                else:
+                    # 절전 모드: 원본을 그대로 보여주고 맵은 비움 — UI 는 이전 프레임 유지가 아니라
+                    # 현재 원본을 그대로 표시하도록 clean=원본으로 둔다 (시연 명확성).
+                    clean_bgr = frame_bgr
+                    dcp_bgr = None
+                    smoke_bgr = None
+
                 latency_ms = (time.perf_counter() - t0) * 1000.0
 
                 # 1) 결과 송출 (QImage 변환 후 송출 — Slot 측은 setPixmap 만).
@@ -145,7 +174,9 @@ class InferenceWorker(QThread):
                 clean_qimg = bgr_to_qimage(clean_bgr)
                 dcp_qimg = bgr_to_qimage(dcp_bgr) if dcp_bgr is not None else _empty_qimage()
                 smoke_qimg = bgr_to_qimage(smoke_bgr) if smoke_bgr is not None else _empty_qimage()
-                self.frame_processed.emit(orig_qimg, clean_qimg, dcp_qimg, smoke_qimg, latency_ms)
+                self.frame_processed.emit(
+                    orig_qimg, clean_qimg, dcp_qimg, smoke_qimg, latency_ms, det_result,
+                )
 
                 # 2) 녹화
                 if writer is not None:

@@ -37,6 +37,7 @@ from PySide6.QtCore import Qt, QSize, QRectF
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -58,6 +59,7 @@ from app import settings as app_settings
 from app.desmoke_engine import DesmokeEngine
 from app.frame_source import FrameSource, list_available_cameras
 from app.inference_worker import InferenceWorker
+from app.smoke_detector import SmokeDetector, find_weights
 from app.style import COLORS, GLOBAL_QSS, latency_level
 
 
@@ -278,6 +280,50 @@ class StatePill(QLabel):
         self.style().polish(self)
 
 
+class SmokePill(QLabel):
+    """연기 탐지 결과를 1초 단위로 보여주는 별도 pill.
+
+    상태 예시:
+    - OFF    : detector 비활성 또는 가중치 없음
+    - CLEAR  : 깨끗
+    - SMOKE  : YOLO vote 통과
+    - SMOKE· thin : ThinSmoke v2 보조 발화
+    - SMOKE· cd   : Cooldown 강제유지
+    - BALLOON: 흰 기구 감지 (참고용)
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__("○ DETECTOR OFF", parent)
+        self.setObjectName("pillSmoke")
+        self.setProperty("state", "off")
+
+    def set_off(self, text: str = "DETECTOR OFF") -> None:
+        self._set("off", f"○ {text}")
+
+    def set_clear(self) -> None:
+        self._set("clear", "● CLEAR")
+
+    def set_smoke(self, *, thin: bool, cooldown: bool, balloon: bool) -> None:
+        suffix = []
+        if thin:
+            suffix.append("thin")
+        if cooldown:
+            suffix.append("cd")
+        tag = "▲ SMOKE"
+        if suffix:
+            tag = f"{tag} · {' · '.join(suffix)}"
+        if balloon:
+            # 기구 감지가 동시에 있으면 표기만 추가 (판정은 이미 SMOKE)
+            tag = f"{tag} ⚪"
+        self._set("smoke", tag)
+
+    def _set(self, state: str, text: str) -> None:
+        self.setText(text)
+        self.setProperty("state", state)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
 class TelemetryBlock(QWidget):
     """라벨(작은 캡스) + 값(모노스페이스) 2단 구조의 텔레메트리 표시.
 
@@ -324,11 +370,14 @@ class MainWindow(QMainWindow):
 
         # ── 상태 ────────────────────────────────────────────────
         self._engine: Optional[DesmokeEngine] = None
+        self._detector: Optional[SmokeDetector] = None  # lazy 로드
         self._worker: Optional[InferenceWorker] = None
         self._latest_clean_qimg: Optional[QImage] = None
         self._record_active: bool = False
         # 콤보 selection 변경을 사용자 액션과 프로그래매틱 변경을 구분
         self._suppress_combo_event: bool = False
+        # 가중치 가용성 — 앱 시작 시 1회 탐색해 UI 토글 enable 여부 결정
+        self._detector_weights_path = find_weights()
 
         # ── 중앙 위젯 / 루트 레이아웃 ──────────────────────────
         central = QWidget(self)
@@ -432,6 +481,10 @@ class MainWindow(QMainWindow):
         outer.addLayout(self._build_device_group())
         outer.addWidget(self._make_divider())
 
+        # Detector 그룹 (연기 탐지 토글)
+        outer.addLayout(self._build_detector_group())
+        outer.addWidget(self._make_divider())
+
         # Actions 그룹 (오른쪽으로 밀기)
         outer.addStretch(1)
         outer.addLayout(self._build_actions_group())
@@ -465,6 +518,61 @@ class MainWindow(QMainWindow):
         self.device_combo.setToolTip("추론 디바이스 선택")
         wrap.addWidget(self.device_combo)
         return wrap
+
+    def _build_detector_group(self) -> QVBoxLayout:
+        """연기 탐지 토글 영역.
+
+        가중치(best.pt) 가 발견된 경우에만 두 체크박스가 활성화된다.
+        - DETECT : 매 프레임 YOLO+ThinSmoke 판정 수행 (UI 인디케이터만 영향)
+        - GATE   : SMOKE 판정 시에만 PFAN 디스모킹 추론 — 절전/시연 모드
+        """
+        wrap = QVBoxLayout()
+        wrap.setSpacing(6)
+        title = QLabel("DETECTOR")
+        title.setObjectName("sectionLabel")
+        wrap.addWidget(title)
+
+        col = QVBoxLayout()
+        col.setSpacing(4)
+        self.chk_detector = QCheckBox("Smoke detect")
+        self.chk_detector.setObjectName("chkDetector")
+        self.chk_gate = QCheckBox("Only when smoke")
+        self.chk_gate.setObjectName("chkDetector")
+
+        if self._detector_weights_path is None:
+            self.chk_detector.setEnabled(False)
+            self.chk_gate.setEnabled(False)
+            tip = (
+                "best.pt 가중치를 찾지 못해 탐지가 꺼져 있습니다.\n"
+                "기본 경로: runs/smoke_detector/yolov8n_cls/weights/best.pt"
+            )
+            self.chk_detector.setToolTip(tip)
+            self.chk_gate.setToolTip(tip)
+        else:
+            self.chk_detector.setChecked(True)  # 가중치 있으면 기본 ON
+            self.chk_detector.setToolTip(
+                f"가중치: {self._detector_weights_path.name}\n"
+                "ON 시 매 프레임 YOLOv8n-cls + ThinSmoke v2 + BalloonGate 판정"
+            )
+            self.chk_gate.setToolTip(
+                "ON 시 SMOKE 판정된 구간에서만 디스모킹 추론을 실행 (절전/시연)"
+            )
+
+        # 게이트는 detector 가 켜져 있을 때만 의미 — 토글 상태에 따라 enable 연동
+        self.chk_detector.toggled.connect(self._on_detect_toggled)
+
+        col.addWidget(self.chk_detector)
+        col.addWidget(self.chk_gate)
+        wrap.addLayout(col)
+        return wrap
+
+    def _on_detect_toggled(self, checked: bool) -> None:
+        """Smoke detect 토글이 꺼지면 'Only when smoke' 도 비활성."""
+        if not checked:
+            self.chk_gate.setChecked(False)
+            self.chk_gate.setEnabled(False)
+        else:
+            self.chk_gate.setEnabled(self._detector_weights_path is not None)
 
     def _build_actions_group(self) -> QVBoxLayout:
         wrap = QVBoxLayout()
@@ -608,20 +716,28 @@ class MainWindow(QMainWindow):
         bar = QStatusBar(self)
         bar.setSizeGripEnabled(False)
 
-        # 좌측: 상태 pill
+        # 좌측: 상태 pill + Smoke 인디케이터 pill
         self._pill_state = StatePill()
         self._pill_state.set_idle()
         bar.addWidget(self._pill_state)
         bar.addWidget(self._make_status_divider())
 
+        # Smoke pill — detector 활성/판정 상태에 따라 동적으로 갱신
+        self._pill_smoke = SmokePill()
+        bar.addWidget(self._pill_smoke)
+        bar.addWidget(self._make_status_divider())
+
         # 우측 (영구 위젯): 텔레메트리 블록들 (오른쪽부터 역순으로 쌓임)
         self._tele_frames = TelemetryBlock("Frames", "0")
+        self._tele_yolo = TelemetryBlock("YOLO conf", "—")
         self._tele_latency = TelemetryBlock("Latency · ms", "—")
         self._tele_fps = TelemetryBlock("FPS", "—")
 
         bar.addPermanentWidget(self._tele_fps)
         bar.addPermanentWidget(self._make_status_divider())
         bar.addPermanentWidget(self._tele_latency)
+        bar.addPermanentWidget(self._make_status_divider())
+        bar.addPermanentWidget(self._tele_yolo)
         bar.addPermanentWidget(self._make_status_divider())
         bar.addPermanentWidget(self._tele_frames)
 
@@ -776,13 +892,30 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "모델 로드 실패", f"{e}")
                 return
 
-        # 2) 소스 결정
+        # 2) Detector 준비 (토글 ON 인 경우에만 lazy 로딩)
+        detector_to_use: Optional[SmokeDetector] = None
+        if self.chk_detector.isChecked() and self._detector_weights_path is not None:
+            if self._detector is None:
+                try:
+                    self._pill_state.set_idle("loading detector...")
+                    QApplication.processEvents()
+                    self._detector = SmokeDetector(
+                        weights_path=self._detector_weights_path,
+                        device=target_device,
+                    )
+                except Exception as e:
+                    QMessageBox.warning(self, "탐지기 로드 실패", f"{e}")
+                    self._detector = None
+            if self._detector is not None and self._detector.is_available():
+                detector_to_use = self._detector
+
+        # 3) 소스 결정
         source = self._resolve_source()
         if source is None:
             self._pill_state.set_idle()
             return
 
-        # 3) 녹화 경로 결정
+        # 4) 녹화 경로 결정
         record_path: Optional[Path] = None
         if self._record_active:
             record_path = self._ask_record_path()
@@ -792,37 +925,48 @@ class MainWindow(QMainWindow):
                 self._record_active = False
                 return
 
-        # 4) 비디오 파일 재생일 땐 원본 속도 유지
+        # 5) 비디오 파일 재생일 땐 원본 속도 유지
         target_fps = None
         if isinstance(source.source_repr, str):
             target_fps = source.fps()
 
-        # 5) 워커 시작
+        # 6) 워커 시작
+        only_when_smoke = self.chk_gate.isChecked() and detector_to_use is not None
         self._worker = InferenceWorker(
             engine=self._engine,
             source=source,
             record_path=record_path,
             target_fps=target_fps,
+            detector=detector_to_use,
+            only_desmoke_when_smoke=only_when_smoke,
         )
         self._worker.frame_processed.connect(self._on_frame)
         self._worker.stats_updated.connect(self._on_stats)
         self._worker.finished_with_reason.connect(self._on_worker_finished)
         self._worker.start()
 
-        # 6) UI 상태 전환
+        # 7) UI 상태 전환
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.btn_snapshot.setEnabled(True)
         self.source_combo.setEnabled(False)
         self.device_combo.setEnabled(False)
         self.btn_record.setEnabled(False)
+        self.chk_detector.setEnabled(False)
+        self.chk_gate.setEnabled(False)
         self._pill_state.set_live(recording=record_path is not None)
+        if detector_to_use is not None:
+            # 워밍업 동안은 빈 상태 — 첫 프레임이 오면 CLEAR/SMOKE 로 갱신됨
+            self._pill_smoke.set_clear()
+        else:
+            self._pill_smoke.set_off("DETECTOR OFF")
         for c in self._all_cards:
             c.set_active(True)
         self._tele_frames.set_value("0")
         self._tele_fps.set_value("—")
         self._tele_latency.set_value("—")
         self._tele_latency.set_level("")
+        self._tele_yolo.set_value("—")
 
     def _on_stop(self) -> None:
         if self._worker is None:
@@ -877,6 +1021,7 @@ class MainWindow(QMainWindow):
         dcp_qimg,
         smoke_qimg,
         latency_ms: float,
+        det_result,
     ) -> None:
         # LIVE / ANALYSIS 양쪽 탭의 같은 카드를 동시에 업데이트
         for c in self._orig_cards:
@@ -899,6 +1044,28 @@ class MainWindow(QMainWindow):
         self._tele_latency.set_value(f"{latency_ms:.0f}")
         self._tele_latency.set_level(latency_level(latency_ms))
 
+        # Detector 결과 — 있으면 SMOKE pill / YOLO conf 갱신
+        if det_result is not None:
+            self._tele_yolo.set_value(f"{det_result.yolo_conf:.2f}")
+            # 신뢰도에 따라 텔레메트리 색상 — 0.4 이상이면 warn, 0.65 이상이면 bad(빨강)
+            if det_result.yolo_conf >= 0.65:
+                self._tele_yolo.set_level("bad")
+            elif det_result.yolo_conf >= 0.4:
+                self._tele_yolo.set_level("warn")
+            else:
+                self._tele_yolo.set_level("")
+
+            if det_result.is_smoke:
+                # thin = ThinSmoke 보조만으로 잡힌 경우 = vote 안 됐는데 thin 발화
+                thin_only = det_result.thin_smoke and not det_result.yolo_vote
+                self._pill_smoke.set_smoke(
+                    thin=thin_only,
+                    cooldown=(not det_result.smoke_state and det_result.cooldown_remaining > 0),
+                    balloon=det_result.is_balloon,
+                )
+            else:
+                self._pill_smoke.set_clear()
+
     def _on_stats(self, fps: float, frame_index: int) -> None:
         self._tele_fps.set_value(f"{fps:.1f}")
         self._tele_frames.set_value(f"{frame_index}")
@@ -913,6 +1080,14 @@ class MainWindow(QMainWindow):
         self.source_combo.setEnabled(True)
         self.device_combo.setEnabled(True)
         self.btn_record.setEnabled(True)
+        # detector 토글 — 가중치 있을 때만 다시 enable. gate 는 detector 켜진 경우에만.
+        if self._detector_weights_path is not None:
+            self.chk_detector.setEnabled(True)
+            self.chk_gate.setEnabled(self.chk_detector.isChecked())
+        # smoke pill 은 정지 상태로 복귀
+        self._pill_smoke.set_off("DETECTOR OFF")
+        self._tele_yolo.set_value("—")
+        self._tele_yolo.set_level("")
         for c in self._all_cards:
             c.set_active(False)
 

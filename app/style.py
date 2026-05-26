@@ -400,6 +400,65 @@ QLabel#pillState[error="true"] {{
     border-color: {COLORS['danger']};
 }}
 
+/* ── 체크박스 (Detector 토글) ──────────────────────────────── */
+QCheckBox#chkDetector {{
+    color: {COLORS['text']};
+    font-family: {FONTS['display']};
+    font-size: 9pt;
+    font-weight: 500;
+    letter-spacing: 1px;
+    padding: 2px 0;
+    spacing: 8px;
+}}
+QCheckBox#chkDetector:disabled {{
+    color: {COLORS['text_subtle']};
+}}
+QCheckBox#chkDetector::indicator {{
+    width: 14px; height: 14px;
+    border: 1px solid {COLORS['border_strong']};
+    border-radius: 3px;
+    background-color: {COLORS['surface_alt']};
+}}
+QCheckBox#chkDetector::indicator:hover {{
+    border-color: {COLORS['accent']};
+}}
+QCheckBox#chkDetector::indicator:checked {{
+    border-color: {COLORS['accent']};
+    background-color: {COLORS['accent']};
+}}
+QCheckBox#chkDetector::indicator:disabled {{
+    background-color: {COLORS['surface_dim']};
+    border-color: {COLORS['border']};
+}}
+
+/* ── Smoke 인디케이터 pill ─────────────────────────────────── */
+QLabel#pillSmoke {{
+    color: {COLORS['text_dim']};
+    background-color: {COLORS['surface_alt']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 13px;
+    padding: 5px 14px;
+    font-family: {FONTS['display']};
+    font-size: 9pt;
+    font-weight: 600;
+    letter-spacing: 2px;
+}}
+QLabel#pillSmoke[state="off"] {{
+    color: {COLORS['text_subtle']};
+    background-color: {COLORS['surface_dim']};
+    border-color: {COLORS['border']};
+}}
+QLabel#pillSmoke[state="clear"] {{
+    color: #06231b;
+    background-color: {COLORS['accent']};
+    border-color: {COLORS['accent']};
+}}
+QLabel#pillSmoke[state="smoke"] {{
+    color: #ffffff;
+    background-color: {COLORS['danger']};
+    border-color: {COLORS['danger']};
+}}
+
 /* ── 탭 위젯 (LIVE / ANALYSIS) ─────────────────────────────── */
 /* documentMode=True 이므로 탭바만 보이고 패널 보더는 직접 그리지 않음. */
 QTabWidget#previewTabs::pane {{
