@@ -18,7 +18,7 @@ from PySide6.QtCore import QSettings
 # 조직/앱 이름 — QSettings 가 저장 위치를 결정할 때 사용. 한 번 정해지면
 # 변경 시 기존 설정이 사라지므로 신중히 정한다.
 ORG_NAME = "Capstone"
-APP_NAME = "PFAN_Desmoke"
+APP_NAME = "Lumen"
 
 
 def _settings() -> QSettings:

@@ -364,7 +364,7 @@ class TelemetryBlock(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("PFAN · DESMOKE — Surgical Video Processing")
+        self.setWindowTitle("Lumen — Surgical Video Processing")
         self.resize(1360, 820)
         self.setStyleSheet(GLOBAL_QSS)
 
@@ -421,7 +421,7 @@ class MainWindow(QMainWindow):
     # 빌더 메서드
     # ─────────────────────────────────────────────────────────────
     def _build_brand_bar(self) -> QFrame:
-        """최상단 브랜드 바 — PFAN · DESMOKE 워드마크 + 태그라인."""
+        """최상단 브랜드 바 — LUMEN 워드마크 + 태그라인."""
         bar = QFrame()
         bar.setObjectName("brandBar")
         bar.setFixedHeight(54)
@@ -430,16 +430,9 @@ class MainWindow(QMainWindow):
         row.setContentsMargins(22, 0, 22, 0)
         row.setSpacing(0)
 
-        mark = QLabel("PFAN")
+        # 앱 워드마크 — 'Lumen'(빛의 단위)으로, 연기를 걷어내 시야를 밝힌다는 의미
+        mark = QLabel("LUMEN")
         mark.setObjectName("brandMark")
-
-        sep = QLabel("·")
-        sep.setObjectName("brandSeparator")
-
-        product = QLabel("DESMOKE")
-        product.setObjectName("brandMark")
-        # 워드마크 두 단어 사이 시각적 균형을 위해 더 톤다운된 색이 자연스러움
-        product.setStyleSheet(f"color: {COLORS['text']}; letter-spacing: 4px;")
 
         tagline = QLabel("SURGICAL  VIDEO  PROCESSING")
         tagline.setObjectName("brandTagline")
@@ -448,8 +441,6 @@ class MainWindow(QMainWindow):
         version.setObjectName("brandVersion")
 
         row.addWidget(mark)
-        row.addWidget(sep)
-        row.addWidget(product)
         row.addSpacing(28)
         # 얇은 세로 구분선 — 브랜드와 태그라인 사이
         sep_line = QFrame()

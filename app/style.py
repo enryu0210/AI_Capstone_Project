@@ -103,12 +103,6 @@ QLabel#brandMark {{
     letter-spacing: 3px;
     padding-left: 6px;
 }}
-QLabel#brandSeparator {{
-    color: {COLORS['text_subtle']};
-    font-family: {FONTS['display']};
-    font-size: 13pt;
-    padding: 0 8px;
-}}
 QLabel#brandTagline {{
     color: {COLORS['text_dim']};
     font-family: {FONTS['display']};
